@@ -1,5 +1,4 @@
-
-; Created: 27/02/2017 11:56:54
+; Created: 20/09/2024
 ; Author : Matheus Moreira e Reinaldo Assis
 ;
 
@@ -8,22 +7,15 @@
 .def dv8u = r22 ;divisor
 .def dcnt8u = r23 ;loop counter
 
-;LED's on PORTB
 
-;Timer 1 � utilizado para definir um intervalo de 0,5 s
-;A cada intervalo os LEDs piscam
-;4 LEDs conectados a PORTB
-
-;.def leds = r17 ;current LED value
-
-;definir os sem�foros
+;definir os semáforos
 ;s1 low end
 
 
 ;00 - estado nulo
 ;01 - vermelho
-;10 - amarelo 
-;11 - verde 
+;10 - amarelo
+;11 - verde
 .def temp = r16
 .def estado = r18
 .def contador = r19
@@ -38,325 +30,361 @@ jmp reset
 .org OC1Aaddr
 jmp OCI1A_Interrupt
 
-table: .db 0xc0,0xf9,0xa4,0xb0,0x99,0x92,0x82,0xf8,0x80,0x90,0x88,0x83,0xc6,0xa1,0x86,0x8e
 reset:
 
-	ldi temp, $FF ;set PORTD for output
-	out DDRD, temp
-	out DDRC, temp
+; ---------- CONFIGURAÇÕES ------------------------------
+; TODO: adicionar comentários para que possamos entender melhor
+; o que (e como) está sendo configurado.
 
-	;Stack initialization
-	ldi temp, low(RAMEND)
-	out SPL, temp
-	ldi temp, high(RAMEND)
-	out SPH, temp
+ldi temp, $FF ;set PORTD for output
+out DDRD, temp
+out DDRC, temp
+out DDRB, temp
 
-	;leds display alternating pattern
-	;ldi temp, s1
-	;ldi temp, $FF
-	;out DDRB, temp
-	;ldi leds, $AA ;0b10101010
-	;out PORTB, leds ;alternating pattern
+;Stack initialization
+ldi temp, low(RAMEND)
+out SPL, temp
+ldi temp, high(RAMEND)
+out SPH, temp
 
-	#define CLOCK 16.0e6 ;clock speed
-	#define DELAY 0.005;
-	.equ PRESCALE = 0b100 ;/256 prescale
-	.equ PRESCALE_DIV = 256
-	.equ WGM = 0b0100 ;Waveform generation mode: CTC
-	;you must ensure this value is between 0 and 65535
-	.equ TOP = int(0.5 + ((CLOCK/PRESCALE_DIV)*DELAY))
-	.if TOP > 65535
-	.error "TOP is out of range"
-	.endif
+#define CLOCK 16.0e6 ;clock speed
+#define DELAY 0.05;
+.equ PRESCALE = 0b100 ;/256 prescale
+.equ PRESCALE_DIV = 256
+.equ WGM = 0b0100 ;Waveform generation mode: CTC
+;you must ensure this value is between 0 and 65535
+.equ TOP = int(0.5 + ((CLOCK/PRESCALE_DIV)*DELAY))
+.if TOP > 65535
+.error "TOP is out of range"
+.endif
 
-	;On MEGA series, write high byte of 16-bit timer registers first
-	ldi temp, high(TOP) ;initialize compare value (TOP)
-	sts OCR1AH, temp
-	ldi temp, low(TOP)
-	sts OCR1AL, temp
-	ldi temp, ((WGM&0b11) << WGM10) ;lower 2 bits of WGM
-	; WGM&0b11 = 0b0100 & 0b0011 = 0b0000 
-	sts TCCR1A, temp
-	;upper 2 bits of WGM and clock select
-	ldi temp, ((WGM>> 2) << WGM12)|(PRESCALE << CS10)
-	; WGM >> 2 = 0b0100 >> 2 = 0b0001
-	; (WGM >> 2) << WGM12 = (0b0001 << 3) = 0b0001000
-	; (PRESCALE << CS10) = 0b100 << 0 = 0b100
-	; 0b0001000 | 0b100 = 0b0001100
-	sts TCCR1B, temp ;start counter
+;On MEGA series, write high byte of 16-bit timer registers first
+ldi temp, high(TOP) ;initialize compare value (TOP)
+sts OCR1AH, temp
+ldi temp, low(TOP)
+sts OCR1AL, temp
+ldi temp, ((WGM&0b11) << WGM10) ;lower 2 bits of WGM
+; WGM&0b11 = 0b0100 & 0b0011 = 0b0000
+sts TCCR1A, temp
+;upper 2 bits of WGM and clock select
+ldi temp, ((WGM>> 2) << WGM12)|(PRESCALE << CS10)
+; WGM >> 2 = 0b0100 >> 2 = 0b0001
+; (WGM >> 2) << WGM12 = (0b0001 << 3) = 0b0001000
+; (PRESCALE << CS10) = 0b100 << 0 = 0b100
+; 0b0001000 | 0b100 = 0b0001100
+sts TCCR1B, temp ;start counter
 
-	
-	lds	 r16, TIMSK1
-	sbr r16, 1 << OCIE1A
-	sts TIMSK1, r16
-	sei
 
+lds r16, TIMSK1
+sbr r16, 1 << OCIE1A
+sts TIMSK1, r16
+sei
+
+; --------------------------------------
+
+ldi contador, 0
+ldi contador_semL, 0
+ldi contador_semH, 0
+
+table:
+    .db $7E, $30, $6D, $79, $33, $5B, $5F, $70, $7F, $7B
+
+; --------- MÁQUINA DE ESTADOS ---------
+; Foi implementada a seguinte lógica para a implementação da máquina de estados
+; em cada estado são chamadas as funções de tratamento, como o controle do display e o
+; controle dos semáforos (que compartilham pinos). O semáforo s1 está no low end no
+; registrador de estados, assim o registrador é composto por 2 bits para cada semáforo.
+; O significado de cada combinação pode ser visto na tabela:
+;
+; -- Tabela de estados ----
+; | 00 - estado nulo |
+; | 01 - vermelho |
+; | 10 - amarelo |
+; | 11 - verde |
+; -------------------------
+
+;01010111
+estado1:
+ldi estado, 0b01010111
+rcall display_ctrl
+rcall state_decoder
+cpi contador, 25
+brlo estado1
+rcall reset_semaforo
+ldi contador, 0
+
+estado2:
+ldi estado, 0b01010110
+rcall display_ctrl
+rcall state_decoder
+cpi contador, 4
+brlo estado2
+rcall reset_semaforo
+ldi contador, 0
+ 
+estado3:
+ldi estado, 0b01010101
+rcall display_ctrl
+rcall state_decoder
+cpi contador, 22
+brlo estado3
+ldi contador, 0
+rcall reset_semaforo
+
+estado4:
+ldi estado, 0b01111101
+rcall display_ctrl
+rcall state_decoder
+cpi contador, 22
+brlo estado4
+ldi contador, 0
+
+estado5:
+ldi estado, 0b01101101
+rcall display_ctrl
+rcall state_decoder
+cpi contador, 4
+brlo estado5
+ldi contador, 0
+
+estado6:
+ldi estado, 0b01011101
+rcall display_ctrl
+rcall state_decoder
+cpi contador, 2
+brlo estado6
 ldi contador, 0
 
 ;00 - estado nulo
 ;01 - vermelho
-;10 - amarelo 
-;11 - verde 
-;01010111
-estado1:
-	ldi estado, 0b01010111
-	rcall display_ctrl
-	rcall state_decoder
-	cpi contador, 25
-	brlo estado1
-	rcall reset_semaforo
-	ldi contador, 0
-
-estado2:
-	ldi estado, 0b01010110
-	rcall display_ctrl
-	rcall state_decoder
-	cpi contador, 4
-	brlo estado2
-	rcall reset_semaforo
-	ldi contador, 0
- 
-estado3:
-	ldi estado, 0b01010101
-	rcall display_ctrl
-	rcall state_decoder
-	cpi contador, 22
-	brlo estado3
-	ldi contador, 0
-	rcall reset_semaforo
-
-estado4:
-	ldi estado, 0b01111101
-	rcall display_ctrl
-	rcall state_decoder
-	cpi contador, 22
-	brlo estado4
-	ldi contador, 0
-
-estado5:
-	ldi estado, 0b01101101
-	rcall display_ctrl
-	rcall state_decoder
-	cpi contador, 4
-	brlo estado5
-	ldi contador, 0
-
-estado6:
-	ldi estado, 0b01011101
-	rcall display_ctrl
-	rcall state_decoder
-	cpi contador, 2
-	brlo estado6
-	ldi contador, 0
-
-;00 - estado nulo
-;01 - vermelho
-;10 - amarelo 
-;11 - verde 
+;10 - amarelo
+;11 - verde
 ;01100110
 
 estado7:
-	ldi estado, 0b11011101
-	rcall display_ctrl
-	rcall state_decoder
-	cpi contador, 50
-	brlo estado7
-	ldi contador, 0
+ldi estado, 0b11011101
+rcall display_ctrl
+rcall state_decoder
+cpi contador, 50
+brlo estado7
+ldi contador, 0
 
 estado8:
-	ldi estado, 0b10011001
-	rcall display_ctrl
-	rcall state_decoder
-	cpi contador, 4
-	brlo estado8
-	ldi contador, 0
+ldi estado, 0b10011001
+rcall display_ctrl
+rcall state_decoder
+cpi contador, 4
+brlo estado8
+ldi contador, 0
 
 estado9:
-	ldi estado, 0b01010101
-	rcall display_ctrl
-	rcall state_decoder
-	cpi contador, 1
-	brlo estado9
-	ldi contador, 0
-	rcall reset_semaforo
-	jmp estado1
+ldi estado, 0b01010101
+rcall display_ctrl
+rcall state_decoder
+cpi contador, 1
+brlo estado9
+ldi contador, 0
+rcall reset_semaforo
+jmp estado1
 
 ; ----------------- CONTROLE DO DISPLAY ----------
+; @argumento: contador_semH
+; @argumento: contador_semL
+; @return null
+; Junta o contador high com o contador low para dar out no display
 display_ctrl:
-	;ldi dv8u, 10
-	;mov dd8u, contador
+; isso era quando ainda tinhamos conversores bcd no circuito
+;mov temp2, contador_semH
+;lsl temp2
+;lsl temp2
+;lsl temp2
+;lsl temp2
+;or temp2, contador_semL
+;out PORTD, temp2
 
-	;rcall div8u
+mov dd8u, contador_semH
+rcall bcd
 
-	; nao achei como fazer shift variavel, segue o lider
-	;lsl dd8u
-	;lsl dd8u
-	;lsl dd8u
-	;lsl dd8u
-	;or dd8u, drem8u
-	;out PORTD, dd8u
+; primeiro selecionamos o display responsável pela dezena (b0 HIGH)
+ldi temp, 0b000000001
+out PORTB, temp
 
-	mov temp2, contador_semH
-	lsl temp2
-	lsl temp2
-	lsl temp2
-	lsl temp2
-	or temp2, contador_semL
-	out PORTD, temp2
+out PORTD, dd8u
 
-	ret
+; agora para a unidade
+mov dd8u, contador_semL
+rcall bcd
+
+ldi temp, 0b000000010
+out PORTB, temp
+
+out PORTD, dd8u
+
+ret
 
 ; -------------- INCREMENTAR SEMAFORO -------
+; Incrementa contador_semL até que atinja 10, então reseta o low e incrementa o high
 inc_semaforo:
-	inc contador_semL
-	cpi contador_semL, 10
-	breq inc_semaforoH
-	ret
-	inc_semaforoH:
-	ldi contador_semL, 0
-	inc contador_semH
-	ret
+inc contador_semL
+cpi contador_semL, 10
+breq inc_semaforoH
+ret
+inc_semaforoH:
+ldi contador_semL, 0
+inc contador_semH
+ret
 
+; Reseta ambos os contadores, high e low
 reset_semaforo:
-	ldi contador_semL, 0
-	ldi contador_semH, 0
-	ret
+ldi contador_semL, 0
+ldi contador_semH, 0
+ret
 
 ;----------------- DECODIFICADOR DOS VALORES VERDE, VERMELHO E AMARELO ----------
 ; 3 bits da porta C reservados para Verde, vermelho, amarelo
 ; @argumento valor : temp
 ; @retorno decodificado : temp
-;001 - vermelho
-;010 - amarelo 
-;100 - verde 
-light_value_decoder:
-	cpi temp2, 0b11
-	breq lvd_verde
-	; ---- se n�o for verde ----
-	ori temp2, 0b000
-	ret
+; Responsável por decodificar o registrador de estados (semáforos) em 3 bits de seleção para
+; os transistores que ligam os leds verde, vermelho e amarelo.
 
-	lvd_verde:
-		ldi temp2, 0b100
-		ret
-		
+;001 - vermelho
+;010 - amarelo
+;100 - verde
+light_value_decoder:
+cpi temp2, 0b11
+breq lvd_verde
+; ---- se não for verde ----
+ori temp2, 0b000
+ret
+
+lvd_verde:
+ldi temp2, 0b100
+ret
+
 
 
 
 ;---------------- DECODIFICADOR DA MAQUINA DE ESTADOS ------------
+; Responsável por permitir o compartilhamento dos pinos, decodifica o estado em sinais de controle
+; para acionar os semáforos e seus respectivos leds.
 state_decoder:
-	; logica para o select dos semaforos
-	; s1 - 0001
-	; s2 - 0010
-	; s3 - 0100
-	; s4 - 1000
+; logica para o select dos semaforos
+; s1 - 0001
+; s2 - 0010
+; s3 - 0100
+; s4 - 1000
 
-	; sintaxe 
-	; b b b b (select) b b b (cor)
+; sintaxe
+; b b b b (select) b b b (cor)
 
-	; ------ s1 ---------------
-	mov temp2, estado
-	andi temp2, 0b11 ; mascara
-	rcall light_value_decoder
-	ldi temp, 0b0001
-	lsl temp
-	lsl temp
-	lsl temp
-	or temp2, temp
-	out PORTC, temp2
+; ------ s1 ---------------
+mov temp2, estado
+andi temp2, 0b11 ; mascara
+rcall light_value_decoder
+ldi temp, 0b0001
+lsl temp
+lsl temp
+lsl temp
+or temp2, temp
+out PORTC, temp2
 
-	; ------ s2 ---------------
-	mov temp2, estado
-	lsr temp2
-	lsr temp2
-	andi temp2, 0b11 ; mascara
-	rcall light_value_decoder
-	ldi temp, 0b0010
-	lsl temp
-	lsl temp
-	lsl temp
-	or temp2, temp
-	out PORTC, temp2
+; ------ s2 ---------------
+mov temp2, estado
+lsr temp2
+lsr temp2
+andi temp2, 0b11 ; mascara
+rcall light_value_decoder
+ldi temp, 0b0010
+lsl temp
+lsl temp
+lsl temp
+or temp2, temp
+out PORTC, temp2
 
-	; ------ s3 ---------------
-	mov temp2, estado
-	lsr temp2
-	lsr temp2
-	lsr temp2
-	lsr temp2
-	andi temp2, 0b11 ; mascara
-	rcall light_value_decoder
-	ldi temp, 0b0100
-	lsl temp
-	lsl temp
-	lsl temp
-	or temp2, temp
-	out PORTC, temp2
+; ------ s3 ---------------
+mov temp2, estado
+lsr temp2
+lsr temp2
+lsr temp2
+lsr temp2
+andi temp2, 0b11 ; mascara
+rcall light_value_decoder
+ldi temp, 0b0100
+lsl temp
+lsl temp
+lsl temp
+or temp2, temp
+out PORTC, temp2
 
-	; ------ s4 ---------------
-	mov temp2, estado
-	lsr temp2
-	lsr temp2
-	lsr temp2
-	lsr temp2
-	lsr temp2
-	lsr temp2
-	andi temp2, 0b11 ; mascara
-	rcall light_value_decoder
-	ldi temp, 0b1000
-	lsl temp
-	lsl temp
-	lsl temp
-	or temp2, temp
+; ------ s4 ---------------
+mov temp2, estado
+lsr temp2
+lsr temp2
+lsr temp2
+lsr temp2
+lsr temp2
+lsr temp2
+andi temp2, 0b11 ; mascara
+rcall light_value_decoder
+ldi temp, 0b1000
+lsl temp
+lsl temp
+lsl temp
+or temp2, temp
 
-	out PORTC, temp2
-	ret
-	
+out PORTC, temp2
+ret
 
-div8u:    sub    drem8u,drem8u    ;clear remainder and carry
-    ldi    dcnt8u,9    ;init loop counter
-d8u_1:    rol    dd8u        ;shift left dividend
-    dec    dcnt8u        ;decrement counter
-    brne    d8u_2        ;if done
-    ret            ;    return
-d8u_2:    rol    drem8u        ;shift dividend into remainder
-    sub    drem8u,dv8u    ;remainder = remainder - divisor
-    brcc    d8u_3        ;if result negative
-    add    drem8u,dv8u    ;    restore remainder
-    clc            ;    clear carry to be shifted into result
-    rjmp    d8u_1        ;else
-d8u_3:    sec            ;    set carry to be shifted into result
-    rjmp    d8u_1
 
+
+;bcd:
+;    ; Usa o valor no r28 como índice na tabela
+;    ldi r30, low(table) ; carrega o endereço da tabela
+;    ldi r31, high(table)
+;    mov r29, r28        ; copia o dígito a ser convertido
+;    clr r28             ; limpa r28 para usar como índice
+;    add r30, r29        ; adiciona o índice à base da tabela
+;    ; Pega o valor correspondente na tabela
+;    lpm r28, Z          ; r28 agora contém o valor para o display
+;    out PORTD, r28      ; envia o valor para o PORTD
+;    ret
+
+; esta função serve como um bcd virtual, convertendo
+; valores binários em sinais de drive para o display
 bcd:
-    ; Usa o valor no r28 como �ndice na tabela
-    ldi r30, low(table) ; carrega o endere�o da tabela
-    ldi r31, high(table)
-    mov r29, r28        ; copia o d�gito a ser convertido
-    clr r28             ; limpa r24 para usar como �ndice
-    add r30, r29        ; adiciona o �ndice � base da tabela
-    ; Pega o valor correspondente na tabela
-    lpm r28, Z          ; r24 agora cont�m o valor para o display
-    out PORTD, r28      ; envia o valor para o PORTD
+    ; Assumimos que o número a ser convertido está no registrador dd8u (r21)
+    ; e que o resultado será armazenado no mesmo registrador.
+
+    mov temp, dd8u      ; Move o número para temp para preservá-lo
+
+    ldi ZH, high(table*2) ; Carrega o endereço alto da tabela de conversão
+    ldi ZL, low(table*2)  ; Carrega o endereço baixo da tabela de conversão
+    add ZL, temp        ; Adiciona o número ao endereço base da tabela
+
+    lpm temp, Z         ; Carrega o valor da tabela correspondente ao número
+    mov dd8u, temp      ; Armazena o valor de volta em `dd8u`
+
     ret
 
+
+; TRATAMENTO DA INTERRUPÇÃO DE TIMER
 OCI1A_Interrupt:
-	push r16
-	in r16, SREG
-	push r16
-
-	
-	;overflow event code goes here
-	;ldi temp, $FF
-	;eor leds, temp ;0b10101010 --> 0b01010101
-
-	inc contador
-	rcall inc_semaforo
-
-	;out PORTD, contador
+push r16
+in r16, SREG
+push r16
 
 
-	pop r16
-	out SREG, r16
-	pop r16
-	reti
+; incrementa o contador de controle
+; de estados
+inc contador
+; chama a função responsável por incrementar o
+; contador do semáforo
+; NOTA: os autores estão cientes que isso não está
+; em boas práticas, porém foi visto como necessário
+; e em sua implementação atual não traz riscos ao programa.
+rcall inc_semaforo
+
+pop r16
+out SREG, r16
+pop r16
+reti
