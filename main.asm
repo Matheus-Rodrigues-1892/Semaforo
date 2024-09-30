@@ -1,9 +1,6 @@
-; Program 8.1 ? LED Blinker
-; Illustrate the use of a Timer/Counter to blink an LED
-; LEDBlinker_Timer.asm
-;
+
 ; Created: 27/02/2017 11:56:54
-; Author : Erick
+; Author : Matheus Moreira e Reinaldo Assis
 ;
 
 .def drem8u = r20 ;remainder
@@ -12,7 +9,6 @@
 .def dcnt8u = r23 ;loop counter
 
 ;LED's on PORTB
-;Clock speed 16 MHz
 
 ;Timer 1 é utilizado para definir um intervalo de 0,5 s
 ;A cada intervalo os LEDs piscam
@@ -33,13 +29,16 @@
 .def contador = r19
 .def temp2 = r24
 
+.def contador_semL = r25
+.def contador_semH = r27
+
 .cseg
 
 jmp reset
 .org OC1Aaddr
 jmp OCI1A_Interrupt
 
-
+table: .db 0xc0,0xf9,0xa4,0xb0,0x99,0x92,0x82,0xf8,0x80,0x90,0x88,0x83,0xc6,0xa1,0x86,0x8e
 reset:
 
 	ldi temp, $FF ;set PORTD for output
@@ -60,7 +59,7 @@ reset:
 	;out PORTB, leds ;alternating pattern
 
 	#define CLOCK 16.0e6 ;clock speed
-	#define DELAY 0.05;
+	#define DELAY 0.005;
 	.equ PRESCALE = 0b100 ;/256 prescale
 	.equ PRESCALE_DIV = 256
 	.equ WGM = 0b0100 ;Waveform generation mode: CTC
@@ -105,6 +104,7 @@ estado1:
 	rcall state_decoder
 	cpi contador, 25
 	brlo estado1
+	rcall reset_semaforo
 	ldi contador, 0
 
 estado2:
@@ -113,6 +113,7 @@ estado2:
 	rcall state_decoder
 	cpi contador, 4
 	brlo estado2
+	rcall reset_semaforo
 	ldi contador, 0
  
 estado3:
@@ -122,6 +123,7 @@ estado3:
 	cpi contador, 22
 	brlo estado3
 	ldi contador, 0
+	rcall reset_semaforo
 
 estado4:
 	ldi estado, 0b01111101
@@ -176,23 +178,48 @@ estado9:
 	cpi contador, 1
 	brlo estado9
 	ldi contador, 0
+	rcall reset_semaforo
 	jmp estado1
 
 ; ----------------- CONTROLE DO DISPLAY ----------
 display_ctrl:
-	ldi dv8u, 10
-	mov dd8u, contador
+	;ldi dv8u, 10
+	;mov dd8u, contador
 
-	rcall div8u
+	;rcall div8u
 
 	; nao achei como fazer shift variavel, segue o lider
-	lsl dd8u
-	lsl dd8u
-	lsl dd8u
-	lsl dd8u
-	or dd8u, drem8u
-	out PORTD, dd8u
+	;lsl dd8u
+	;lsl dd8u
+	;lsl dd8u
+	;lsl dd8u
+	;or dd8u, drem8u
+	;out PORTD, dd8u
 
+	mov temp2, contador_semH
+	lsl temp2
+	lsl temp2
+	lsl temp2
+	lsl temp2
+	or temp2, contador_semL
+	out PORTD, temp2
+
+	ret
+
+; -------------- INCREMENTAR SEMAFORO -------
+inc_semaforo:
+	inc contador_semL
+	cpi contador_semL, 10
+	breq inc_semaforoH
+	ret
+	inc_semaforoH:
+	ldi contador_semL, 0
+	inc contador_semH
+	ret
+
+reset_semaforo:
+	ldi contador_semL, 0
+	ldi contador_semH, 0
 	ret
 
 ;----------------- DECODIFICADOR DOS VALORES VERDE, VERMELHO E AMARELO ----------
@@ -301,6 +328,18 @@ d8u_2:    rol    drem8u        ;shift dividend into remainder
 d8u_3:    sec            ;    set carry to be shifted into result
     rjmp    d8u_1
 
+bcd:
+    ; Usa o valor no r28 como índice na tabela
+    ldi r30, low(table) ; carrega o endereço da tabela
+    ldi r31, high(table)
+    mov r29, r28        ; copia o dígito a ser convertido
+    clr r28             ; limpa r24 para usar como índice
+    add r30, r29        ; adiciona o índice à base da tabela
+    ; Pega o valor correspondente na tabela
+    lpm r28, Z          ; r24 agora contém o valor para o display
+    out PORTD, r28      ; envia o valor para o PORTD
+    ret
+
 OCI1A_Interrupt:
 	push r16
 	in r16, SREG
@@ -312,6 +351,7 @@ OCI1A_Interrupt:
 	;eor leds, temp ;0b10101010 --> 0b01010101
 
 	inc contador
+	rcall inc_semaforo
 
 	;out PORTD, contador
 
