@@ -7,6 +7,7 @@
 .def dv8u = r22 ;divisor
 .def dcnt8u = r23 ;loop counter
 
+.def dspTimeCtrl = r26  ; New register for display time control
 
 ;definir os semáforos
 ;s1 low end
@@ -16,6 +17,9 @@
 ;01 - vermelho
 ;10 - amarelo
 ;11 - verde
+
+.def portB_state = r17
+
 .def temp = r16
 .def estado = r18
 .def contador = r19
@@ -48,7 +52,7 @@ ldi temp, high(RAMEND)
 out SPH, temp
 
 #define CLOCK 16.0e6 ;clock speed
-#define DELAY 0.05;
+#define DELAY 1;
 .equ PRESCALE = 0b100 ;/256 prescale
 .equ PRESCALE_DIV = 256
 .equ WGM = 0b0100 ;Waveform generation mode: CTC
@@ -192,35 +196,44 @@ jmp estado1
 ; @argumento: contador_semL
 ; @return null
 ; Junta o contador high com o contador low para dar out no display
+; Main display control function
 display_ctrl:
-; isso era quando ainda tinhamos conversores bcd no circuito
-;mov temp2, contador_semH
-;lsl temp2
-;lsl temp2
-;lsl temp2
-;lsl temp2
-;or temp2, contador_semL
-;out PORTD, temp2
+    inc dspTimeCtrl     ; Increment display time control
+    sbrc dspTimeCtrl, 0 ; Skip next instruction if bit 0 is clear (even)
+    rjmp display_ctrl_dezena
+    rjmp display_ctrl_unidade
 
-mov dd8u, contador_semH
-rcall bcd
+; Function to control tens digit display
+display_ctrl_dezena:
+	
+	ldi temp, 0
+	out PORTB, temp
+	out PORTD, temp
 
-; primeiro selecionamos o display responsável pela dezena (b0 HIGH)
-ldi temp, 0b000000001
-out PORTB, temp
+    mov dd8u, contador_semH
+    rcall bcd
 
-out PORTD, dd8u
+    ldi temp, 0b00000001
+    out PORTB, temp
+    out PORTD, dd8u
 
-; agora para a unidade
-mov dd8u, contador_semL
-rcall bcd
+    ret
 
-ldi temp, 0b000000010
-out PORTB, temp
+; Function to control units digit display
+display_ctrl_unidade:
+	ldi temp, 0
+	out PORTB, temp
+	out PORTD, temp
 
-out PORTD, dd8u
+    mov dd8u, contador_semL
+    rcall bcd
 
-ret
+    ldi temp, 0b00000010
+    out PORTB, temp
+    out PORTD, dd8u
+
+    ret
+
 
 ; -------------- INCREMENTAR SEMAFORO -------
 ; Incrementa contador_semL até que atinja 10, então reseta o low e incrementa o high
@@ -365,6 +378,17 @@ bcd:
     mov dd8u, temp      ; Armazena o valor de volta em `dd8u`
 
     ret
+
+; Função genérica de delay em assembly AVR
+; @param: r24 - Número de loops para o delay
+;         Cada loop gera aproximadamente 4 ciclos de clock.
+delay:
+    mov temp, r24       ; Copia o valor de r24 (número de loops) para temp
+delay_loop:
+    dec temp            ; Decrementa o contador de loops
+    brne delay_loop     ; Se o valor de temp não for zero, continue no loop
+    ret                 ; Retorna quando o delay terminar
+
 
 
 ; TRATAMENTO DA INTERRUPÇÃO DE TIMER
