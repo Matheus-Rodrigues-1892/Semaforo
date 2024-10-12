@@ -52,7 +52,7 @@ ldi temp, high(RAMEND)
 out SPH, temp
 
 #define CLOCK 16.0e6 ;clock speed
-#define DELAY 1;
+#define DELAY 0.35;
 .equ PRESCALE = 0b100 ;/256 prescale
 .equ PRESCALE_DIV = 256
 .equ WGM = 0b0100 ;Waveform generation mode: CTC
@@ -207,14 +207,21 @@ display_ctrl:
 display_ctrl_dezena:
 	
 	ldi temp, 0
-	out PORTB, temp
+	andi portB_state, 0b11111100 ; zera os bits relacionados ao display
+
+	out PORTB, portB_state
 	out PORTD, temp
 
     mov dd8u, contador_semH
     rcall bcd
 
-    ldi temp, 0b00000001
-    out PORTB, temp
+    ;ldi temp, 0b00000001
+	mov temp2, portB_state
+	andi temp2, 0b11111100
+	ori temp2, 0b00000001 ; select 01 para o display
+	mov portB_state, temp2 ; update do estado
+
+    out PORTB, portB_state
     out PORTD, dd8u
 
     ret
@@ -222,14 +229,24 @@ display_ctrl_dezena:
 ; Function to control units digit display
 display_ctrl_unidade:
 	ldi temp, 0
-	out PORTB, temp
+	andi portB_state, 0b11111100 ; zera os bits relacionados ao display
+
+	out PORTB, portB_state
 	out PORTD, temp
 
     mov dd8u, contador_semL
     rcall bcd
 
-    ldi temp, 0b00000010
-    out PORTB, temp
+    ;ldi temp, 0b00000010
+    ;out PORTB, temp
+    ;out PORTD, dd8u
+
+	mov temp2, portB_state
+	andi temp2, 0b11111100
+	ori temp2, 0b00000010 ; select 10 para o display
+	mov portB_state, temp2 ; update do estado
+
+    out PORTB, portB_state
     out PORTD, dd8u
 
     ret
@@ -287,8 +304,17 @@ state_decoder:
 ; s3 - 0100
 ; s4 - 1000
 
+; ATENÇÃO: DEVIDO A ARDUINO UNO OCUPAR O PINO 7 DA PORTA C, NAO FOI POSSIVEL USA-LO PARA
+; O SELECT DO S4, ASSIM, USAMOS UM NOVO REG portB_state, COM ELE FAZEMOS UMA MASCARA PARA QUE
+; O SELECT DO S4 PASSE A SER O B2
+
 ; sintaxe
 ; b b b b (select) b b b (cor)
+
+
+andi portB_state, 0b11111011 ;zera b2 para não selecionar s4
+
+out PORTB, portB_state
 
 ; ------ s1 ---------------
 mov temp2, estado
@@ -346,6 +372,12 @@ lsl temp
 or temp2, temp
 
 out PORTC, temp2
+
+andi portB_state, 0b11111011 ;zera b2
+ori portb_state, 0b00000100 ;seleciona b2
+
+out PORTB, portB_state
+
 ret
 
 
