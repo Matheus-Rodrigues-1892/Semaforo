@@ -2,6 +2,9 @@
 ; Author : Matheus Moreira e Reinaldo Assis
 ;
 
+#define CLOCK 16.0e6 ;clock speed
+#define DELAY 1;
+
 .def drem8u = r20 ;remainder
 .def dd8u = r21 ;dividend and result
 .def dv8u = r22 ;divisor
@@ -51,8 +54,7 @@ out SPL, temp
 ldi temp, high(RAMEND)
 out SPH, temp
 
-#define CLOCK 16.0e6 ;clock speed
-#define DELAY 0.35;
+
 .equ PRESCALE = 0b100 ;/256 prescale
 .equ PRESCALE_DIV = 256
 .equ WGM = 0b0100 ;Waveform generation mode: CTC
@@ -298,88 +300,91 @@ ret
 ; Responsável por permitir o compartilhamento dos pinos, decodifica o estado em sinais de controle
 ; para acionar os semáforos e seus respectivos leds.
 state_decoder:
-; logica para o select dos semaforos
-; s1 - 0001
-; s2 - 0010
-; s3 - 0100
-; s4 - 1000
+    push temp
+    push temp2
 
-; ATENÇÃO: DEVIDO A ARDUINO UNO OCUPAR O PINO 7 DA PORTA C, NAO FOI POSSIVEL USA-LO PARA
-; O SELECT DO S4, ASSIM, USAMOS UM NOVO REG portB_state, COM ELE FAZEMOS UMA MASCARA PARA QUE
-; O SELECT DO S4 PASSE A SER O B2
+    ; Limpa todos os selects e saídas antes de qualquer operação
+    ldi temp, 0
+    out PORTC, temp
+    andi portB_state, 0b11111011 ; Limpa B2 (select de s4)
+    out PORTB, portB_state
 
-; sintaxe
-; b b b b (select) b b b (cor)
+    ; Use dspTimeCtrl para determinar qual semáforo atualizar
+    mov temp, dspTimeCtrl
+    andi temp, 0b11 ; Obtém os últimos 2 bits (mod 4)
 
+    ; Pula para a atualização do semáforo apropriado
+    cpi temp, 0
+    breq update_s1
+    cpi temp, 1
+    breq update_s2
+    cpi temp, 2
+    breq update_s3
+    cpi temp, 3
+    breq update_s4
 
-andi portB_state, 0b11111011 ;zera b2 para não selecionar s4
+    rjmp state_decoder_end
 
-out PORTB, portB_state
+update_s1:
+    ldi temp, 0b00001000 ; Select para s1
+    out PORTC, temp
+    nop ; Pequeno delay para estabilização
+    mov temp2, estado
+    andi temp2, 0b11 ; mascara
+    rcall light_value_decoder
+    or temp2, temp ; Adiciona o select
+    out PORTC, temp2
+    rjmp state_decoder_end
 
-; ------ s1 ---------------
-mov temp2, estado
-andi temp2, 0b11 ; mascara
-rcall light_value_decoder
-ldi temp, 0b0001
-lsl temp
-lsl temp
-lsl temp
-or temp2, temp
-out PORTC, temp2
+update_s2:
+    ldi temp, 0b00010000 ; Select para s2
+    out PORTC, temp
+    nop ; Pequeno delay para estabilização
+    mov temp2, estado
+    lsr temp2
+    lsr temp2
+    andi temp2, 0b11 ; mascara
+    rcall light_value_decoder
+    or temp2, temp ; Adiciona o select
+    out PORTC, temp2
+    rjmp state_decoder_end
 
-; ------ s2 ---------------
-mov temp2, estado
-lsr temp2
-lsr temp2
-andi temp2, 0b11 ; mascara
-rcall light_value_decoder
-ldi temp, 0b0010
-lsl temp
-lsl temp
-lsl temp
-or temp2, temp
-out PORTC, temp2
+update_s3:
+    ldi temp, 0b00100000 ; Select para s3
+    out PORTC, temp
+    nop ; Pequeno delay para estabilização
+    mov temp2, estado
+    lsr temp2
+    lsr temp2
+    lsr temp2
+    lsr temp2
+    andi temp2, 0b11 ; mascara
+    rcall light_value_decoder
+    or temp2, temp ; Adiciona o select
+    out PORTC, temp2
+    rjmp state_decoder_end
 
-; ------ s3 ---------------
-mov temp2, estado
-lsr temp2
-lsr temp2
-lsr temp2
-lsr temp2
-andi temp2, 0b11 ; mascara
-rcall light_value_decoder
-ldi temp, 0b0100
-lsl temp
-lsl temp
-lsl temp
-or temp2, temp
-out PORTC, temp2
+update_s4:
+    ; Ativa o select para s4 no PORTB
+    ori portB_state, 0b00000100 ; Set B2
+    out PORTB, portB_state
+    nop ; Pequeno delay para estabilização
 
-; ------ s4 ---------------
-mov temp2, estado
-lsr temp2
-lsr temp2
-lsr temp2
-lsr temp2
-lsr temp2
-lsr temp2
-andi temp2, 0b11 ; mascara
-rcall light_value_decoder
-ldi temp, 0b1000
-lsl temp
-lsl temp
-lsl temp
-or temp2, temp
+    mov temp2, estado
+    lsr temp2
+    lsr temp2
+    lsr temp2
+    lsr temp2
+    lsr temp2
+    lsr temp2
+    andi temp2, 0b11 ; mascara
+    rcall light_value_decoder
+    out PORTC, temp2
 
-out PORTC, temp2
-
-andi portB_state, 0b11111011 ;zera b2
-ori portb_state, 0b00000100 ;seleciona b2
-
-out PORTB, portB_state
-
-ret
-
+state_decoder_end:
+    pop temp2
+    pop temp
+    ret
 
 
 ;bcd:
