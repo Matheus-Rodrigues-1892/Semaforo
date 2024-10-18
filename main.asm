@@ -10,7 +10,7 @@
 .def dv8u = r22 ;divisor
 .def dcnt8u = r23 ;loop counter
 
-.def dspTimeCtrl = r26  ; New register for display time control
+.def dspTimeCtrl = r26  ; Registrador para controle dos displays e de revesamento da seleção dos leds
 
 ;definir os semáforos
 ;s1 low end
